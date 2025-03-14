@@ -1,0 +1,15 @@
+lmdb
+numpy
+opencv-python
+pyyaml
+scipy
+tb-nightly
+torch>=1.7
+torchvision
+tqdm
+yapf
+streamlit
+pillow       # Last version compatible with Python 3.7
+realesrgan
+basicsr
+facexlib

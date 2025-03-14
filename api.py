@@ -1,27 +1,18 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import StreamingResponse
+import streamlit as st
 import numpy as np
-from io import BytesIO
 from PIL import Image
-from insightface.app import FaceAnalysis
 import torch
 from torchvision import transforms
-import cv2  # Minimal use for I/O only
+import cv2  # Minimal use for I/O and brightness
 
-app = FastAPI()
-
-# Initialize InsightFace
-face_app = FaceAnalysis(name='buffalo_l')
-face_app.prepare(ctx_id=0, det_size=(640, 640))
-
-# Simulated AI model for skin smoothing and acne removal
+# Simulated AI model for skin enhancement
 class SkinEnhancer:
     def __init__(self):
         self.transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
-        self.model = lambda x: x  # Placeholder for real model
+        self.model = lambda x: x  # Placeholder
 
     def enhance(self, image):
         img_tensor = self.transform(image).unsqueeze(0)
@@ -33,45 +24,32 @@ class SkinEnhancer:
 
 skin_enhancer = SkinEnhancer()
 
-def apply_face_shape(image, shape_factor=0.1):
-    faces = face_app.get(image)
-    if not faces:
-        return image
+def auto_adjust_parameters(image):
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    v_channel = hsv[:, :, 2]
+    mean_brightness = np.mean(v_channel) / 255.0
     
-    face = faces[0]
-    landmarks = face.landmark_2d_106
-    h, w = image.shape[:2]
+    auto_brightness = 1.0
+    if mean_brightness < 0.4:
+        auto_brightness = 1.5
+    elif mean_brightness > 0.7:
+        auto_brightness = 0.8
     
-    # Define control points for warping
-    src_pts = landmarks.astype(np.float32)
-    dst_pts = src_pts.copy()
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    contrast = gray.std() / 255.0
+    auto_smooth = 1.0 + (contrast * 2.0)
     
-    # Slim the face by adjusting jawline points toward the center
-    center_x = np.mean(src_pts[:, 0])
-    for i in range(len(src_pts)):
-        x, y = src_pts[i]
-        dx = center_x - x
-        dist = abs(dx)
-        if dist > 0 and i < 34:  # Focus on jawline (first 34 points)
-            shift = shape_factor * dist
-            new_x = x + (dx * shift / dist)
-            dst_pts[i] = [new_x, y]
-    
-    # Use affine transform for simplicity and alignment
-    M = cv2.getAffineTransform(src_pts[:3], dst_pts[:3])  # Use first 3 points for stability
-    warped = cv2.warpAffine(image, M, (w, h))
-    
-    return warped
+    return auto_smooth, auto_brightness
 
-def apply_beauty_filter(image, smooth_level=1.0, brightness=1.0, shape_factor=0.1, acne_intensity=1.0):
-    # Apply face shape adjustment
-    shaped = apply_face_shape(image, shape_factor)
+def apply_beauty_filter(image, smooth_level=1.0, brightness=1.0, acne_intensity=1.0, auto_adjust=False):
+    if auto_adjust:
+        auto_smooth, auto_bright = auto_adjust_parameters(image)
+        smooth_level = min(auto_smooth, 2.0)
+        brightness = auto_bright
     
-    # Simulate AI skin enhancement
-    pil_img = Image.fromarray(shaped)
+    pil_img = Image.fromarray(image)
     enhanced = skin_enhancer.enhance(pil_img)
     
-    # Adjust brightness (minimal OpenCV)
     hsv = cv2.cvtColor(enhanced, cv2.COLOR_RGB2HSV)
     h, s, v = cv2.split(hsv)
     v = cv2.multiply(v, brightness)
@@ -80,22 +58,22 @@ def apply_beauty_filter(image, smooth_level=1.0, brightness=1.0, shape_factor=0.
     
     return final
 
-@app.post("/beautify")
-async def beautify_image(file: UploadFile = File(...), smooth_level: float = 1.0, brightness: float = 1.0, 
-                        shape_factor: float = 0.1, acne_intensity: float = 1.0):
-    contents = await file.read()
-    nparr = np.frombuffer(contents, np.uint8)
-    original = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
-    if original is None:
-        raise HTTPException(status_code=400, detail="Invalid image file")
-    
-    processed = apply_beauty_filter(original, smooth_level, brightness, shape_factor, acne_intensity)
-    combined = np.hstack((original, processed))
-    
-    _, buffer = cv2.imencode(".jpg", combined)
-    img_io = BytesIO(buffer)
-    
-    return StreamingResponse(img_io, media_type="image/jpeg")
+# Streamlit UI
+st.title("Beauty Filter App")
 
-# Run with: uvicorn api:app --reload
+# Parameters
+auto_adjust = st.checkbox("Auto-Adjust Smoothing & Brightness", value=False)
+smooth_level = st.slider("Smoothing Level", 0.1, 2.0, 1.0, disabled=auto_adjust)
+brightness = st.slider("Brightness", 0.5, 1.5, 1.0, disabled=auto_adjust)
+acne_intensity = st.slider("Acne Removal Intensity", 0.5, 2.0, 1.0)
+
+# File Upload
+uploaded_file = st.file_uploader("Upload an Image", type=["jpg", "png", "jpeg"])
+if uploaded_file:
+    image = np.array(Image.open(uploaded_file))
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    processed_image = apply_beauty_filter(image, smooth_level, brightness, acne_intensity, auto_adjust)
+    combined = np.hstack((image, processed_image))
+    st.image(cv2.cvtColor(combined, cv2.COLOR_BGR2RGB), caption="Original (Left) | Processed (Right)")
+
+# Run with: streamlit run app.py

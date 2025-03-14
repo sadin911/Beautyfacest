@@ -82,7 +82,8 @@ def apply_beauty_filter(image, smooth_level=1.0, brightness=1.0, shape_factor=0.
         smooth_level = min(auto_smooth, 2.0)
         brightness = auto_bright
     
-    shaped = apply_face_shape(image, shape_factor)
+    #shaped = apply_face_shape(image, shape_factor)
+    shaped = image
     pil_img = Image.fromarray(shaped)
     enhanced = skin_enhancer.enhance(pil_img)
     
